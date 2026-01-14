@@ -1,179 +1,208 @@
-import streamlit as st
 import pandas as pd
-from io import BytesIO
+from datetime import date
 
 # ==========================================
-# 1. KONFIGURASI HALAMAN
-# ==========================================
-st.set_page_config(
-    page_title="BoQ Calculator - ECI House",
-    page_icon="🏗️",
-    layout="wide"
-)
-
-# Judul & Sidebar
-st.title("🏡 Calculator RAB / BoQ - ECI House")
-st.markdown("Aplikasi hitung estimasi biaya konstruksi berdasarkan DED ECI House.")
-
-with st.sidebar:
-    st.header("Pengaturan Proyek")
-    nama_proyek = st.text_input("Nama Proyek", "Rumah Tinggal ECI House")
-    lokasi = st.text_input("Lokasi", "Bandar Lampung")
-    kontraktor = st.text_input("Kontraktor/Estimator", "SmartStudio")
-    st.divider()
-    st.info("💡 **Tips:** Klik dua kali pada sel tabel 'Volume' atau 'Harga Satuan' untuk mengedit nilainya. Total akan update otomatis.")
-
-# ==========================================
-# 2. DATA AWAL (DEFAULT)
+# 1. KONFIGURASI & KELAS DATA
 # ==========================================
 
-# Kita buat fungsi helper untuk bikin dictionary data biar rapi
-def create_item(kode, uraian, spek, vol, sat, harga):
-    return {
-        "Kode": kode,
-        "Uraian Pekerjaan": uraian,
-        "Spesifikasi": spek,
-        "Volume": float(vol),
-        "Satuan": sat,
-        "Harga Satuan": float(harga),
-        "Total Harga": float(vol * harga)
-    }
+class BoQItem:
+    def __init__(self, kode, uraian, spesifikasi, satuan, volume_est, harga_satuan=0):
+        self.kode = kode            # Referensi Kode Gambar (misal: ARS-01, STR-03)
+        self.uraian = uraian        # Nama Pekerjaan
+        self.spesifikasi = spesifikasi # Detail spek material/dimensi
+        self.satuan = satuan        # Satuan (m2, m3, unit, ls)
+        self.volume = volume_est    # Volume estimasi (User harus input real jika 0)
+        self.harga_satuan = harga_satuan # Harga satuan (Estimasi)
+        self.total_harga = self.volume * self.harga_satuan
 
-# --- INISIALISASI DATA (SESSION STATE) ---
-# Kita simpan data di session_state supaya tidak reset saat user klik sesuatu
-if 'data_boq' not in st.session_state:
-    st.session_state['data_boq'] = {
-        "1. Persiapan & Tanah": [
-            create_item("UMUM", "Pembersihan Lahan", "Lokasi Proyek", 200, "m2", 15000),
-            create_item("UMUM", "Pematokan & Bowplank", "Kayu Meranti", 80, "m'", 35000),
-            create_item("STR-01", "Galian Tanah Pondasi Footplate", "Sesuai gambar", 45, "m3", 95000),
-            create_item("STR-02", "Galian Tanah Batu Belah", "Lajur menerus", 30, "m3", 95000),
-            create_item("STR-01", "Urugan Pasir Bawah", "t = 5-10 cm", 5, "m3", 250000),
-            create_item("UMUM", "Urugan Tanah Kembali", "Dipadatkan", 25, "m3", 35000),
-        ],
-        "2. Struktur Beton": [
-            create_item("STR-01", "Pondasi Footplate F1", "120x120 cm", 19, "Unit", 2500000),
-            create_item("STR-01", "Pondasi Footplate F2/F3", "100x100 cm", 10, "Unit", 2000000),
-            create_item("STR-02", "Pondasi Batu Belah", "1PC:5PS", 25, "m3", 950000),
-            create_item("STR-03", "Sloof S1 (20x40)", "Beton K-250", 6.5, "m3", 3800000),
-            create_item("STR-03", "Sloof S2 (15x25)", "Beton K-250", 3.2, "m3", 3800000),
-            create_item("STR-08", "Kolom Utama K1 (30x50)", "Isi Volume Manual", 0, "m3", 4200000),
-            create_item("STR-08", "Kolom K2 (30x30)", "Isi Volume Manual", 0, "m3", 4200000),
-            create_item("STR-04", "Balok B1 (20x40)", "Isi Volume Manual", 0, "m3", 4500000),
-            create_item("STR-06", "Plat Dak Atap", "t=15cm + Waterproof", 0, "m3", 4800000),
-        ],
-        "3. Arsitektur": [
-            create_item("ARS-04", "Dinding Bata Merah", "Plester Aci", 450, "m2", 165000),
-            create_item("ARS-12", "Lantai Granite Tile", "60x60 Polished", 120, "m2", 350000),
-            create_item("ARS-12", "Lantai Keramik Teras", "60x60 Unpolished", 45, "m2", 250000),
-            create_item("ARS-15", "Plafond Gypsum", "9mm + Hollow", 140, "m2", 140000),
-            create_item("ARS-14", "Batu Alam Fasad", "Andesit/Setara", 25, "m2", 450000),
-        ],
-        "4. Kusen & Pintu": [
-            create_item("KUS-01", "Pintu P1 (Utama)", "Double Swing, Kayu", 2, "Unit", 5500000),
-            create_item("KUS-01", "Pintu P2 (Kamar)", "Single Swing", 12, "Unit", 3500000),
-            create_item("KUS-02", "Pintu P3 (Lipat)", "Alumunium Kaca", 1, "Unit", 4800000),
-            create_item("KUS-06", "Jendela J1", "Swing Double", 4, "Unit", 1800000),
-            create_item("KUS-07", "Jendela J3", "Swing Single", 9, "Unit", 1200000),
-        ],
-        "5. Besi & Kanopi": [
-            create_item("ARS-28", "Pagar Gerbang PG1", "Perforated + Hollow", 12, "m2", 1800000),
-            create_item("ARS-34", "Kanopi Skylight", "Kaca Tempered 10mm", 8, "m2", 2200000),
-            create_item("ARS-30", "Railing Tangga", "Kaca Tempered", 10, "m'", 1500000),
-        ],
-        "6. MEP (Listrik & Air)": [
-            create_item("MEP-01", "Instalasi Air Bersih", "Pipa PVC AW", 1, "Ls", 6500000),
-            create_item("MEP-04", "Instalasi Air Kotor", "Pipa PVC D", 1, "Ls", 8500000),
-            create_item("MEP-10", "Septictank Biofil", "Kapasitas Besar", 1, "Unit", 5500000),
-            create_item("MEP-07", "Titik Lampu", "Downlight + Kabel", 45, "Titik", 275000),
-            create_item("MEP-07", "Titik Stop Kontak", "Panasonic + Kabel", 25, "Titik", 285000),
-        ]
-    }
+def print_header(nama_divisi):
+    print("\n" + "="*110)
+    print(f"DIVISI PEKERJAAN: {nama_divisi.upper()}")
+    print("="*110)
+
+def print_footer(total):
+    print("-" * 110)
+    print(f"SUBTOTAL: Rp {total:,.2f}")
+    print("="*110 + "\n")
 
 # ==========================================
-# 3. LAYOUT UTAMA (TABS)
+# 2. INPUT DATA BERDASARKAN GAMBAR KERJA (DED ECI.pdf)
 # ==========================================
 
-divisi_list = list(st.session_state['data_boq'].keys())
-tabs = st.tabs(divisi_list)
+# --- DIVISI 1: PERSIAPAN & TANAH ---
+# Referensi: Gambar Situasi & Rencana Pondasi
+data_persiapan = [
+    BoQItem("UMUM", "Pembersihan Lahan", "Lokasi Proyek", "m2", 200, 15000),
+    BoQItem("UMUM", "Pematokan & Bowplank", "Kayu Meranti", "m'", 80, 35000),
+    BoQItem("STR-01", "Galian Tanah Pondasi Footplate", "Kedalaman ssuai gambar", "m3", 45, 95000),
+    BoQItem("STR-02", "Galian Tanah Pondasi Batu Belah", "Lajur menerus", "m3", 30, 95000),
+    BoQItem("STR-01", "Urugan Pasir Bawah Pondasi", "t = 5-10 cm", "m3", 5, 250000),
+    BoQItem("STR-01", "Lantai Kerja (Aanstamping)", "Campuran 1:3:5 / Rabat", "m3", 3, 750000),
+    BoQItem("UMUM", "Urugan Tanah Kembali", "Dipadatkan", "m3", 25, 35000),
+]
 
-grand_total = 0
-rekap_per_divisi = {}
-
-for i, tab in enumerate(tabs):
-    nama_divisi = divisi_list[i]
-    with tab:
-        st.subheader(f"📋 {nama_divisi}")
-        
-        # Konversi list dictionary ke DataFrame
-        df = pd.DataFrame(st.session_state['data_boq'][nama_divisi])
-        
-        # Tampilkan Data Editor (Tabel yang bisa diedit)
-        edited_df = st.data_editor(
-            df,
-            column_config={
-                "Harga Satuan": st.column_config.NumberColumn(format="Rp %d"),
-                "Total Harga": st.column_config.NumberColumn(format="Rp %d", disabled=True), # Total readonly
-            },
-            num_rows="dynamic", # User bisa tambah baris
-            key=f"editor_{i}",
-            use_container_width=True
-        )
-        
-        # Hitung Ulang Total Harga berdasarkan input user
-        edited_df["Total Harga"] = edited_df["Volume"] * edited_df["Harga Satuan"]
-        
-        # Simpan balik ke session state agar perubahan tidak hilang saat pindah tab
-        st.session_state['data_boq'][nama_divisi] = edited_df.to_dict('records')
-        
-        # Tampilkan Subtotal
-        subtotal = edited_df["Total Harga"].sum()
-        grand_total += subtotal
-        rekap_per_divisi[nama_divisi] = subtotal
-        
-        st.metric(label=f"Subtotal {nama_divisi}", value=f"Rp {subtotal:,.0f}")
-
-# ==========================================
-# 4. REKAPITULASI & DOWNLOAD
-# ==========================================
-
-st.divider()
-st.header("💰 Rekapitulasi Biaya (Grand Total)")
-
-col1, col2 = st.columns([2, 1])
-
-with col1:
-    # Bikin DataFrame Rekap
-    df_rekap = pd.DataFrame(list(rekap_per_divisi.items()), columns=["Divisi Pekerjaan", "Subtotal"])
-    st.dataframe(
-        df_rekap, 
-        column_config={"Subtotal": st.column_config.NumberColumn(format="Rp %d")},
-        use_container_width=True
-    )
-
-with col2:
-    st.metric(label="TOTAL ESTIMASI BIAYA", value=f"Rp {grand_total:,.0f}")
+# --- DIVISI 2: STRUKTUR BETON (BAWAH & ATAS) ---
+# Referensi: STR-01 s/d STR-10 (Denah Pondasi, Sloof, Kolom, Balok)
+data_struktur = [
+    # Sub-Structure (Pondasi)
+    BoQItem("STR-01", "Pondasi Footplate F1", "120x120 cm, Beton Bertulang", "Unit", 19, 2500000), # Jml hitung dari denah
+    BoQItem("STR-01", "Pondasi Footplate F2/F3", "100x100 cm, Beton Bertulang", "Unit", 10, 2000000),
+    BoQItem("STR-02", "Pondasi Batu Belah", "Camp. 1PC:5PS (Pondasi Menerus)", "m3", 25, 950000),
     
-    # --- FITUR DOWNLOAD EXCEL ---
-    def to_excel(data_dict, rekap_df, total):
-        output = BytesIO()
-        with pd.ExcelWriter(output, engine='openpyxl') as writer:
-            # Sheet Rekap
-            rekap_df.to_excel(writer, index=False, sheet_name='REKAPITULASI')
+    # Sloof (STR-03)
+    BoQItem("STR-03", "Sloof S1", "Beton 20x40 cm, Besi Utama D13", "m3", 6.5, 3800000), # Vol = Pjg x 0.2 x 0.4
+    BoQItem("STR-03", "Sloof S2", "Beton 15x25 cm, Besi Utama D13", "m3", 3.2, 3800000),
+
+    # Kolom (STR-08, STR-09)
+    BoQItem("STR-08", "Kolom Utama K1", "30x50 cm, Besi 14-D13", "m3", 0, 4200000), # Input Volume
+    BoQItem("STR-08", "Kolom K2", "30x30 cm, Besi 8-D13", "m3", 0, 4200000),
+    BoQItem("STR-08", "Kolom K3", "15x30 cm, Besi 6-D13", "m3", 0, 4200000),
+    BoQItem("STR-08", "Kolom Praktis KP", "15x15 cm, Besi 4-D10", "m'", 0, 150000),
+
+    # Balok (STR-04, STR-05, STR-06)
+    BoQItem("STR-04", "Balok B1", "20x40 cm, Besi Utama D13", "m3", 0, 4500000),
+    BoQItem("STR-04", "Balok B2", "15x30 cm", "m3", 0, 4500000),
+    BoQItem("STR-04", "Balok B3", "15x20 cm", "m3", 0, 4500000),
+    
+    # Plat & Tangga
+    BoQItem("STR-05", "Plat Lantai 2", "Beton Bertulang t=15cm", "m3", 0, 4500000),
+    BoQItem("STR-06", "Plat Dak Atap", "Beton Bertulang t=15cm + Waterproofing", "m3", 0, 4800000),
+    BoQItem("ARS-30", "Tangga Beton Utama", "Plat & Bordes t=15cm", "m3", 2.5, 4500000),
+]
+
+# --- DIVISI 3: ARSITEKTUR (DINDING, LANTAI, PLAFOND) ---
+# Referensi: ARS-12 s/d ARS-16 (Denah Pola Lantai & Plafond)
+data_arsitektur = [
+    # Dinding
+    BoQItem("ARS-04", "Pasangan Dinding Bata", "1/2 Bata Merah, Plester, Aci", "m2", 450, 165000),
+    BoQItem("ARS-04", "Pasangan Trasram", "Campuran 1:2 (Area Basah)", "m2", 60, 185000),
+    BoQItem("ARS-05", "Dinding Roster Beton", "Fasad Depan & Pagar", "m2", 12, 350000),
+    BoQItem("ARS-14", "Finishing Batu Alam", "Dinding Fasad Depan (Andesit/Setara)", "m2", 25, 450000),
+    
+    # Lantai
+    BoQItem("ARS-12", "Lantai Granite Tile", "60x60 cm Polished (R.Utama, R.Tamu)", "m2", 120, 350000),
+    BoQItem("ARS-12", "Lantai Keramik Teras", "60x60 cm Unpolished/Matt", "m2", 45, 250000),
+    BoQItem("ARS-12", "Lantai KM/WC", "40x40 cm Tekstur Kasar", "m2", 35, 220000),
+    BoQItem("ARS-12", "Lantai Carport", "Koral Sikat / Batu Ampyang", "m2", 30, 275000),
+    
+    # Plafond
+    BoQItem("ARS-15", "Rangka Plafond Hollow", "Galvanis 40x40 & 20x40", "m2", 180, 140000),
+    BoQItem("ARS-15", "Penutup Plafond Gypsum", "9mm (Interior)", "m2", 140, 95000),
+    BoQItem("ARS-15", "Penutup Plafond GRC", "6mm (Eksterior/Overstek)", "m2", 40, 95000),
+]
+
+# --- DIVISI 4: KUSEN, PINTU, & JENDELA (KOSE & DETAIL) ---
+# Referensi: ARS-17 s/d ARS-27 (Detail Kusen Lengkap)
+data_kusen = [
+    # Pintu (P)
+    BoQItem("KUS-01", "Pintu P1 (Utama)", "Swing Double, Alum 4\", Panil Kayu Solid", "Unit", 2, 5500000),
+    BoQItem("KUS-01", "Pintu P2 (Kamar)", "Swing Single, Alum 4\", Panil Kayu", "Unit", 12, 3500000),
+    BoQItem("KUS-02", "Pintu P3 (Lipat/Folding)", "Alum 4\", Kaca Bening 5mm", "Unit", 1, 4800000),
+    BoQItem("KUS-02", "Pintu P4 (KM/WC)", "Swing, Alum 4\", Panil Solid/PVC Premium", "Unit", 5, 2200000),
+    BoQItem("KUS-03", "Pintu P5 (Sliding)", "Alum 4\", Kaca Bening 5mm", "Unit", 1, 3800000),
+    BoQItem("KUS-03", "Pintu P6 (Lipat/Folding)", "Alum 4\", Kaca Bening 5mm", "Unit", 1, 4800000),
+    
+    # Pintu Jendela (PJ) & Jendela (J)
+    BoQItem("KUS-04", "Pintu Jendela PJ1", "Swing, Kaca 5mm", "Unit", 1, 4200000),
+    BoQItem("KUS-04", "Pintu Jendela PJ2", "Swing, Kaca 5mm", "Unit", 2, 4000000),
+    BoQItem("KUS-05", "Pintu Jendela PJ3-PJ5", "Swing, Kaca 5mm (R.Kerja/Fitnes)", "Unit", 3, 3800000),
+    BoQItem("KUS-06", "Jendela J1", "Swing Double, Kaca 5mm", "Unit", 4, 1800000),
+    BoQItem("KUS-06", "Jendela J2", "Swing Triple, Kaca 5mm", "Unit", 3, 2400000),
+    BoQItem("KUS-07", "Jendela J3", "Swing Single, Kaca 5mm", "Unit", 9, 1200000),
+    BoQItem("KUS-08", "Bouvenlicht BV", "Kaca Mati/Jalusi (Ventilasi)", "Unit", 7, 750000),
+]
+
+# --- DIVISI 5: PEKERJAAN BESI & LOGAM (PAGAR & KANOPI) ---
+# Referensi: ARS-28, ARS-29, ARS-34, ARS-35
+data_besi = [
+    BoQItem("ARS-28", "Pagar Gerbang PG1/PG2", "Hollow 50x100 + Plat Perforated 6mm (Folding)", "m2", 12, 1800000), 
+    BoQItem("ARS-29", "Pintu Besi PB (Carport)", "Sliding, Hollow + Plat Perforated", "Unit", 1, 6500000),
+    BoQItem("ARS-34", "Kanopi Skylight R.Jemur", "Rangka Hollow 50x100 + Kaca Tempered 10mm", "m2", 8, 2200000),
+    BoQItem("ARS-35", "Kanopi Taman Belakang", "Rangka Hollow + Kaca Tempered 10mm", "m2", 12, 2200000),
+    BoQItem("ARS-30", "Railing Tangga Utama", "Rangka Besi/Stainless + Kaca Tempered", "m'", 10, 1500000),
+    BoQItem("ARS-14", "Railing Balkon Depan", "Rangka Besi/Stainless + Kaca Tempered", "m'", 8, 1500000),
+]
+
+# --- DIVISI 6: MEKANIKAL, ELEKTRIKAL & PLUMBING (MEP) ---
+# Referensi: MEP-01 s/d MEP-13
+data_mep = [
+    # Sanitasi
+    BoQItem("MEP-01", "Instalasi Air Bersih", "Pipa PVC AW 1/2\" & 3/4\"", "Ls", 1, 6500000),
+    BoQItem("MEP-04", "Instalasi Air Kotor", "Pipa PVC D 3\" & 4\"", "Ls", 1, 8500000),
+    BoQItem("MEP-10", "Septictank Biofil/Beton", "Detail Hal. 66 (Lengkap)", "Unit", 1, 5500000),
+    BoQItem("MEP-11", "Sumur Resapan", "Detail Hal. 67 (Ijuk, Kerikil, Bata)", "Unit", 1, 3000000),
+    BoQItem("MEP-12", "Bak Kontrol", "Pas. Bata + Tutup Beton (Hal. 69)", "Unit", 4, 650000),
+    BoQItem("MEP-13", "Rumah Pompa", "Detail Hal. 68", "Unit", 1, 2000000),
+    BoQItem("MEP-01", "Torent Air", "Kapasitas 1000L + Radar", "Unit", 1, 2500000),
+
+    # Elektrikal (Hitung jumlah titik dari denah MEP-07 & MEP-08)
+    BoQItem("MEP-07", "Titik Lampu Downlight", "Termasuk Kabel NYM 2x1.5", "Titik", 45, 275000),
+    BoQItem("MEP-07", "Titik Stop Kontak", "Termasuk Kabel NYM 3x2.5", "Titik", 25, 285000),
+    BoQItem("MEP-07", "Titik Saklar", "Tunggal & Ganda", "Titik", 20, 265000),
+    BoQItem("MEP-07", "Box MCB & Sekring", "Presto/Setara", "Unit", 1, 1200000),
+]
+
+# ==========================================
+# 3. FUNGSI UTAMA (GENERATE REPORT)
+# ==========================================
+
+def generate_boq_report():
+    print("="*110)
+    print(" " * 40 + "BILL OF QUANTITIES (BoQ)")
+    print(" " * 35 + "PROYEK: RUMAH TINGGAL ECI HOUSE")
+    print(" " * 40 + f"Tanggal: {date.today()}")
+    print("="*110)
+    
+    grand_total = 0
+    
+    # List of all divisions
+    all_divisions = [
+        ("I. PEKERJAAN PERSIAPAN & TANAH", data_persiapan),
+        ("II. PEKERJAAN STRUKTUR BETON", data_struktur),
+        ("III. PEKERJAAN ARSITEKTUR (DINDING/LANTAI)", data_arsitektur),
+        ("IV. PEKERJAAN KUSEN PINTU & JENDELA", data_kusen),
+        ("V. PEKERJAAN BESI, PAGAR & KANOPI", data_besi),
+        ("VI. PEKERJAAN MEP (LISTRIK & SANITASI)", data_mep),
+    ]
+
+    # Process each division
+    for nama_divisi, daftar_item in all_divisions:
+        print_header(nama_divisi)
+        
+        # Prepare data for DataFrame
+        table_data = []
+        divisi_total = 0
+        
+        for item in daftar_item:
+            # Recalculate total in case volume changed
+            item.total_harga = item.volume * item.harga_satuan
+            divisi_total += item.total_harga
             
-            # Sheet Detail per Divisi
-            for divisi, items in data_dict.items():
-                df_div = pd.DataFrame(items)
-                sheet_name = divisi.split(".")[1].strip()[:30] # Nama sheet max 31 char
-                df_div.to_excel(writer, index=False, sheet_name=sheet_name)
-                
-        return output.getvalue()
+            table_data.append([
+                item.kode,
+                item.uraian,
+                item.spesifikasi,
+                f"{item.volume}",
+                item.satuan,
+                f"Rp {item.harga_satuan:,.0f}",
+                f"Rp {item.total_harga:,.0f}"
+            ])
+            
+        # Create DataFrame
+        df = pd.DataFrame(table_data, columns=["REF", "URAIAN PEKERJAAN", "SPESIFIKASI", "VOL", "SAT", "HARGA SAT", "TOTAL HARGA"])
+        
+        # Print DataFrame nicely
+        print(df.to_string(index=False, col_space=12, justify='left'))
+        print_footer(divisi_total)
+        grand_total += divisi_total
 
-    excel_data = to_excel(st.session_state['data_boq'], df_rekap, grand_total)
-    
-    st.download_button(
-        label="📥 Download Laporan Excel",
-        data=excel_data,
-        file_name=f"RAB_{nama_proyek.replace(' ', '_')}.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )
+    print("\n" + "#"*110)
+    print(f"ESTIMASI TOTAL BIAYA KONSTRUKSI (Grand Total): Rp {grand_total:,.2f}")
+    print("#"*110)
+    print("\nCatatan:")
+    print("1. Volume bernilai '0' harus dihitung manual dari gambar CAD/PDF karena merupakan panjang lari/luas area spesifik.")
+    print("2. Harga Satuan adalah estimasi standar. Sesuaikan dengan AHSP lokasi (Bandar Lampung) dan harga pasar terkini.")
+    print("3. Item Pagar (Plat Perforated) dan Kanopi (Kaca Tempered) menggunakan material premium, pastikan cek harga supplier.")
+
+if __name__ == "__main__":
+    generate_boq_report()
